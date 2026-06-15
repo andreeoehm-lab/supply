@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mr Oehms SortViz</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@700;800&display=swap');
+
+  :root {
+    --bg: #f0ede8;
+    --panel: #faf8f5;
+    --border: #d0c8bc;
+    --accent: #4a3fc7;
+    --accent2: #c73a5a;
+    --green: #1a8a6a;
+    --yellow: #b07800;
+    --text: #1a1a2e;
+    --text-dim: #7a7060;
+    --bar-default: #3a3a5c;
+    --bar-compare: #c8900a;
+    --bar-swap: #c73a5a;
+    --bar-sorted: #1a8a6a;
+    --bar-pivot: #4a3fc7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    font-family: 'Space Mono', monospace;
+    min-height: 100vh;
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+  }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: 1.8rem;
+    font-weight: 800;
+    color: #1a1a2e;
+    letter-spacing: -1px;
+    margin-bottom: 4px;
+  }
+  h1 span { color: var(--accent); }
+
+  .tagline {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  /* CONTROLS */
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 16px;
+    width: min(1100px, 98vw);
+  }
+
+  .ctrl-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ctrl-group label {
+    font-size: 0.58rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+  .ctrl-group .btn-row {
+    display: flex;
+    gap: 4px;
+  }
+
+  .btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.72rem;
+    padding: 7px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: #fff; }
+  .btn.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .btn.active-algo { background: var(--accent2); border-color: var(--accent2); color: #fff; font-weight: 700; }
+  .btn.action { border-color: var(--green); color: var(--green); }
+  .btn.action:hover { background: var(--green); color: #000; }
+  .btn.danger { border-color: var(--accent2); color: var(--accent2); }
+  .btn.danger:hover { background: var(--accent2); color: #fff; }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* CANVAS AREA */
+  .canvas-wrap {
+    width: min(1100px, 98vw);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  #vizCanvas {
+    display: block;
+    width: 100%;
+    height: 420px;
+  }
+
+  /* STATUS BAR */
+  .status-bar {
+    width: min(1100px, 98vw);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 4px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .stat .val {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fff;
+  }
+  .stat .lbl {
+    font-size: 0.55rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .status-msg {
+    font-size: 0.72rem;
+    color: var(--yellow);
+    min-height: 18px;
+    letter-spacing: 0.5px;
+    text-align: center;
+    flex: 1;
+  }
+
+  /* LEGEND */
+  .legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 4px;
+    margin-bottom: 8px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.6rem;
+    color: var(--text-dim);
+  }
+  .legend-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+
+  /* Step controls */
+  #stepControls {
+    display: none;
+    gap: 8px;
+    align-items: center;
+    margin-top: 6px;
+  }
+  #stepControls.visible { display: flex; }
+</style>
+</head>
+<body>
+
+<h1>Mr Oehms <span>SortViz</span></h1>
+<p class="tagline">Algorithmen visualisieren</p>
+
+<div class="controls">
+  <!-- Count -->
+  <div class="ctrl-group">
+    <label>Anzahl Werte</label>
+    <div class="btn-row">
+      <button class="btn active" id="n25" onclick="setCount(25, this)">25</button>
+      <button class="btn" id="n100" onclick="setCount(100, this)">100</button>
+      <button class="btn" id="n250" onclick="setCount(250, this)">250</button>
+    </div>
+  </div>
+
+  <!-- View mode -->
+  <div class="ctrl-group">
+    <label>Darstellung</label>
+    <div class="btn-row">
+      <button class="btn active" id="mBars" onclick="setMode('bars', this)">Striche</button>
+      <button class="btn" id="mDots" onclick="setMode('dots', this)">Punkte</button>
+    </div>
+  </div>
+
+  <!-- Rotation -->
+  <div class="ctrl-group">
+    <label>Ausrichtung</label>
+    <div class="btn-row">
+      <button class="btn active" id="rotNormal" onclick="setRotation(false, this)">↑ Normal</button>
+      <button class="btn" id="rotRight" onclick="setRotation(true, this)">→ 90° rechts</button>
+    </div>
+  </div>
+
+  <!-- Algorithm -->
+  <div class="ctrl-group">
+    <label>Algorithmus</label>
+    <div class="btn-row">
+      <button class="btn" onclick="setAlgo('bubble', this)">Bubble Sort</button>
+      <button class="btn" onclick="setAlgo('min', this)">Min Sort</button>
+      <button class="btn" onclick="setAlgo('max', this)">Max Sort</button>
+      <button class="btn" onclick="setAlgo('insertion', this)">Insertion Sort</button>
+    </div>
+  </div>
+
+  <!-- Speed -->
+  <div class="ctrl-group">
+    <label>Geschwindigkeit</label>
+    <div class="btn-row">
+      <button class="btn" onclick="setSpeed('step', this)">Schritt</button>
+      <button class="btn" onclick="setSpeed('vslow', this)">Sehr langsam</button>
+      <button class="btn" onclick="setSpeed('slow', this)">Langsam</button>
+      <button class="btn active" id="speedNormal" onclick="setSpeed('normal', this)">Normal</button>
+      <button class="btn" onclick="setSpeed('fast', this)">Schnell</button>
+      <button class="btn" onclick="setSpeed('superfast', this)">Superschnell</button>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="ctrl-group">
+    <label>Steuerung</label>
+    <div class="btn-row">
+      <button class="btn action" onclick="startSort()" id="startBtn">▶ Start</button>
+      <button class="btn danger" onclick="resetArr()" id="resetBtn">↺ Neu</button>
+    </div>
+  </div>
+</div>
+
+<!-- Step controls -->
+<div id="stepControls">
+  <button class="btn action" onclick="doStep()">→ Nächster Schritt</button>
+  <span style="font-size:0.7rem;color:var(--text-dim)">Schritt-für-Schritt Modus</span>
+</div>
+
+<!-- Canvas -->
+<div class="canvas-wrap">
+  <canvas id="vizCanvas"></canvas>
+</div>
+
+<!-- Status Bar -->
+<div class="status-bar">
+  <div class="stat">
+    <span class="val" id="cmpCount">0</span>
+    <span class="lbl">Vergleiche</span>
+  </div>
+  <div class="stat">
+    <span class="val" id="swpCount">0</span>
+    <span class="lbl">Tausche</span>
+  </div>
+  <div class="status-msg" id="statusMsg">Algorithmus wählen und ▶ Start drücken</div>
+  <div class="stat">
+    <span class="val" id="passCount">0</span>
+    <span class="lbl">Durchläufe</span>
+  </div>
+  <div class="stat">
+    <span class="val" id="progressPct">0%</span>
+    <span class="lbl">Fortschritt</span>
+  </div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3a3a5c;border:1px solid #888"></div>Normal</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#c8900a"></div>Vergleich</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#c73a5a"></div>Tausch</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#4a3fc7"></div>Referenz / Pivot</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#1a8a6a"></div>Sortiert</div>
+</div>
+
+<script>
+const canvas = document.getElementById('vizCanvas');
+const ctx = canvas.getContext('2d');
+
+let N = 25;
+let mode = 'bars'; // 'bars' | 'dots'
+let algo = 'bubble';
+let speed = 'normal';
+let rotated = false;
+let arr = [];
+let colorMap = {}; // index -> color key
+let sortedSet = new Set();
+
+let comparisons = 0, swaps = 0, passes = 0;
+let animId = null;
+let running = false;
+let steps = []; // generator steps
+let gen = null;
+let stepPending = false;
+
+const DELAYS = { step: null, vslow: 400, slow: 150, normal: 30, fast: 2, superfast: 0 };
+const COLORS = {
+  default: '#3a3a5c',
+  compare: '#c8900a',
+  swap:    '#c73a5a',
+  sorted:  '#1a8a6a',
+  pivot:   '#4a3fc7',
+  min:     '#1a6a8a',
+};
+
+// ---------- RESIZE ----------
+function resizeCanvas() {
+  const w = canvas.parentElement.clientWidth;
+  canvas.width = w;
+  canvas.height = 420;
+  draw();
+}
+window.addEventListener('resize', resizeCanvas);
+
+// ---------- DATA ----------
+function genArr() {
+  arr = [];
+  for (let i = 0; i < N; i++) arr.push(Math.floor(Math.random() * 98) + 2);
+  colorMap = {};
+  sortedSet = new Set();
+  comparisons = 0; swaps = 0; passes = 0;
+  updateStats();
+  setStatus('');
+  draw();
+}
+
+function resetArr() {
+  stopSort();
+  genArr();
+}
+
+// ---------- SETTINGS ----------
+function setCount(n, btn) {
+  stopSort();
+  N = n;
+  document.querySelectorAll('#n25,#n100,#n250').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  genArr();
+}
+
+function setMode(m, btn) {
+  mode = m;
+  document.querySelectorAll('#mBars,#mDots').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  draw();
+}
+
+function setAlgo(a, btn) {
+  stopSort();
+  algo = a;
+  document.querySelectorAll('.btn.active-algo').forEach(b => b.classList.remove('active-algo'));
+  btn.classList.add('active-algo');
+  genArr();
+}
+
+function setSpeed(s, btn) {
+  speed = s;
+  document.querySelectorAll('[onclick^="setSpeed"]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const sc = document.getElementById('stepControls');
+  if (s === 'step') sc.classList.add('visible');
+  else sc.classList.remove('visible');
+}
+
+function setRotation(r, btn) {
+  rotated = r;
+  document.querySelectorAll('#rotNormal,#rotRight').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  draw();
+}
+
+
+function draw() {
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#faf8f5';
+  ctx.fillRect(0, 0, W, H);
+
+  const pad = 10;
+  const maxVal = 100;
+
+  if (rotated) {
+    // 90° right: bars grow left→right, items stacked top→bottom
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const barH = Math.max(1, innerH / N);
+    const gap = barH > 4 ? 1 : 0;
+    const bh = barH - gap;
+
+    if (mode === 'bars') {
+      for (let i = 0; i < N; i++) {
+        const y = pad + i * barH;
+        const w = (arr[i] / maxVal) * innerW;
+        ctx.fillStyle = getColor(i);
+        if (bh >= 6) {
+          const r = Math.min(3, bh / 2);
+          ctx.beginPath();
+          ctx.moveTo(pad, y + r);
+          ctx.lineTo(pad, y + bh - r);
+          ctx.quadraticCurveTo(pad, y + bh, pad + r, y + bh);
+          ctx.lineTo(pad + w - r, y + bh);
+          ctx.quadraticCurveTo(pad + w, y + bh, pad + w, y + bh - r);
+          ctx.lineTo(pad + w, y + r);
+          ctx.quadraticCurveTo(pad + w, y, pad + w - r, y);
+          ctx.lineTo(pad + r, y);
+          ctx.quadraticCurveTo(pad, y, pad, y + r);
+          ctx.fill();
+        } else {
+          ctx.fillRect(pad, y, w, bh);
+        }
+      }
+    } else {
+      // dots: at right tip of bar
+      const dotR = Math.max(2, Math.min(bh / 2 - 0.5, 8));
+      for (let i = 0; i < N; i++) {
+        const cy = pad + i * barH + barH / 2;
+        const cx = pad + (arr[i] / maxVal) * innerW;
+        ctx.beginPath();
+        ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = getColor(i);
+        ctx.fill();
+      }
+    }
+  } else {
+    // Normal: bars grow upward
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const barW = Math.max(1, innerW / N);
+    const gap = barW > 4 ? 1 : 0;
+    const bw = barW - gap;
+
+    if (mode === 'bars') {
+      for (let i = 0; i < N; i++) {
+        const x = pad + i * barW;
+        const h = (arr[i] / maxVal) * innerH;
+        const y = pad + innerH - h;
+        ctx.fillStyle = getColor(i);
+        if (bw >= 6) {
+          const r = Math.min(3, bw / 2);
+          ctx.beginPath();
+          ctx.moveTo(x + r, y);
+          ctx.lineTo(x + bw - r, y);
+          ctx.quadraticCurveTo(x + bw, y, x + bw, y + r);
+          ctx.lineTo(x + bw, y + h);
+          ctx.lineTo(x, y + h);
+          ctx.lineTo(x, y + r);
+          ctx.quadraticCurveTo(x, y, x + r, y);
+          ctx.fill();
+        } else {
+          ctx.fillRect(x, y, bw, h);
+        }
+      }
+    } else {
+      // dots at bar tip
+      const dotR = Math.max(2, Math.min(bw / 2 - 0.5, 8));
+      for (let i = 0; i < N; i++) {
+        const x = pad + i * barW + barW / 2;
+        const h = (arr[i] / maxVal) * innerH;
+        const y = pad + innerH - h;
+        ctx.beginPath();
+        ctx.arc(x, y, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = getColor(i);
+        ctx.fill();
+      }
+    }
+  }
+}
+
+function getColor(i) {
+  if (sortedSet.has(i)) return COLORS.sorted;
+  return COLORS[colorMap[i]] || COLORS.default;
+}
+
+// ---------- STATS ----------
+function updateStats() {
+  document.getElementById('cmpCount').textContent = comparisons;
+  document.getElementById('swpCount').textContent = swaps;
+  document.getElementById('passCount').textContent = passes;
+  document.getElementById('progressPct').textContent = Math.round((sortedSet.size / N) * 100) + '%';
+}
+
+function setStatus(msg) {
+  document.getElementById('statusMsg').textContent = msg;
+}
+
+// ---------- SORT ENGINE ----------
+function stopSort() {
+  running = false;
+  if (animId) { clearTimeout(animId); cancelAnimationFrame(animId); }
+  animId = null;
+  gen = null;
+  document.getElementById('startBtn').disabled = false;
+}
+
+function startSort() {
+  if (running) return;
+  stopSort();
+  colorMap = {};
+  sortedSet = new Set();
+  comparisons = 0; swaps = 0; passes = 0;
+  updateStats();
+  running = true;
+  document.getElementById('startBtn').disabled = true;
+
+  const generators = { bubble: bubbleSort, min: minSort, max: maxSort, insertion: insertionSort };
+  gen = generators[algo]();
+
+  if (speed === 'step') {
+    setStatus('Schritt-für-Schritt: Nächster Schritt →');
+    // draw initial
+    draw();
+  } else {
+    runAuto();
+  }
+}
+
+function runAuto() {
+  if (!running || !gen) return;
+  if (speed === 'superfast') {
+    // Run many steps per animation frame
+    const BATCH = 50;
+    function frame() {
+      if (!running || !gen) return;
+      for (let k = 0; k < BATCH; k++) {
+        const result = gen.next();
+        if (result.done) { draw(); updateStats(); finishSort(); return; }
+      }
+      draw();
+      updateStats();
+      animId = requestAnimationFrame(frame);
+    }
+    animId = requestAnimationFrame(frame);
+  } else {
+    const result = gen.next();
+    draw();
+    updateStats();
+    if (result.done) { finishSort(); return; }
+    const delay = DELAYS[speed];
+    animId = setTimeout(runAuto, delay);
+  }
+}
+
+function doStep() {
+  if (!gen || !running) return;
+  const result = gen.next();
+  draw();
+  updateStats();
+  if (result.done) finishSort();
+}
+
+function finishSort() {
+  running = false;
+  // mark all sorted
+  for (let i = 0; i < N; i++) sortedSet.add(i);
+  colorMap = {};
+  draw();
+  updateStats();
+  setStatus(`✓ Fertig! ${comparisons} Vergleiche, ${swaps} Tausche, ${passes} Durchläufe`);
+  document.getElementById('startBtn').disabled = false;
+  gen = null;
+}
+
+// ---------- ALGORITHMS ----------
+function* bubbleSort() {
+  let n = arr.length;
+  for (let i = 0; i < n - 1; i++) {
+    passes++;
+    let swapped = false;
+    for (let j = 0; j < n - i - 1; j++) {
+      colorMap = { [j]: 'compare', [j+1]: 'compare' };
+      comparisons++;
+      setStatus(`Vergleiche Position ${j} (${arr[j]}) mit ${j+1} (${arr[j+1]})`);
+      yield;
+      if (arr[j] > arr[j+1]) {
+        colorMap = { [j]: 'swap', [j+1]: 'swap' };
+        setStatus(`Tausche ${arr[j]} ↔ ${arr[j+1]}`);
+        yield;
+        [arr[j], arr[j+1]] = [arr[j+1], arr[j]];
+        swaps++;
+        swapped = true;
+      }
+      colorMap = {};
+    }
+    sortedSet.add(n - i - 1);
+    if (!swapped) break;
+  }
+  sortedSet.add(0);
+}
+
+function* minSort() {
+  for (let i = 0; i < arr.length - 1; i++) {
+    passes++;
+    let minIdx = i;
+    colorMap = { [i]: 'pivot' };
+    setStatus(`Suche Minimum ab Position ${i}...`);
+    yield;
+    for (let j = i + 1; j < arr.length; j++) {
+      colorMap = { [minIdx]: 'min', [j]: 'compare' };
+      comparisons++;
+      setStatus(`Vergleiche ${arr[j]} mit aktuellem Minimum ${arr[minIdx]}`);
+      yield;
+      if (arr[j] < arr[minIdx]) {
+        colorMap[minIdx] = 'default';
+        minIdx = j;
+        colorMap = { [minIdx]: 'min', [j]: 'min' };
+        setStatus(`Neues Minimum: ${arr[minIdx]} an Position ${minIdx}`);
+        yield;
+      }
+    }
+    if (minIdx !== i) {
+      colorMap = { [i]: 'swap', [minIdx]: 'swap' };
+      setStatus(`Tausche ${arr[i]} ↔ ${arr[minIdx]}`);
+      yield;
+      [arr[i], arr[minIdx]] = [arr[minIdx], arr[i]];
+      swaps++;
+    }
+    sortedSet.add(i);
+    colorMap = {};
+  }
+  sortedSet.add(arr.length - 1);
+}
+
+function* maxSort() {
+  for (let i = arr.length - 1; i > 0; i--) {
+    passes++;
+    let maxIdx = 0;
+    colorMap = { [0]: 'pivot' };
+    setStatus(`Suche Maximum bis Position ${i}...`);
+    yield;
+    for (let j = 1; j <= i; j++) {
+      colorMap = { [maxIdx]: 'pivot', [j]: 'compare' };
+      comparisons++;
+      setStatus(`Vergleiche ${arr[j]} mit aktuellem Maximum ${arr[maxIdx]}`);
+      yield;
+      if (arr[j] > arr[maxIdx]) {
+        colorMap = {};
+        maxIdx = j;
+        colorMap = { [maxIdx]: 'pivot' };
+        setStatus(`Neues Maximum: ${arr[maxIdx]} an Position ${maxIdx}`);
+        yield;
+      }
+    }
+    if (maxIdx !== i) {
+      colorMap = { [i]: 'swap', [maxIdx]: 'swap' };
+      setStatus(`Tausche ${arr[i]} ↔ ${arr[maxIdx]}`);
+      yield;
+      [arr[i], arr[maxIdx]] = [arr[maxIdx], arr[i]];
+      swaps++;
+    }
+    sortedSet.add(i);
+    colorMap = {};
+  }
+  sortedSet.add(0);
+}
+
+function* insertionSort() {
+  sortedSet.add(0);
+  for (let i = 1; i < arr.length; i++) {
+    passes++;
+    const key = arr[i];
+    let j = i - 1;
+    colorMap = { [i]: 'pivot' };
+    setStatus(`Einfügen von ${key} (Position ${i})`);
+    yield;
+    while (j >= 0 && arr[j] > key) {
+      colorMap = { [j]: 'compare', [j+1]: 'swap' };
+      comparisons++;
+      setStatus(`${arr[j]} > ${key} → verschiebe nach rechts`);
+      yield;
+      arr[j+1] = arr[j];
+      swaps++;
+      colorMap = { [j+1]: 'swap' };
+      yield;
+      j--;
+    }
+    comparisons++;
+    arr[j+1] = key;
+    colorMap = {};
+    sortedSet.add(i);
+    setStatus(`${key} eingefügt an Position ${j+1}`);
+    yield;
+  }
+}
+
+// ---------- INIT ----------
+genArr();
+resizeCanvas();
+setSpeed('normal', document.getElementById('speedNormal'));
+</script>
+</body>
+</html>

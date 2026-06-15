@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Zylinder-Waage</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background: #f0ece4; height: 100vh; overflow: hidden;
+  user-select: none; touch-action: none;
+}
+.app { display: grid; grid-template-columns: 100px 1fr 150px; height: 100vh; }
+
+.buffer-col, .tray-col {
+  display: flex; flex-direction: column;
+  justify-content: center; align-items: center;
+  gap: 6px; padding: 12px 8px; background: #e8e3da;
+}
+.buffer-col { border-right: 1px solid #d0c8bc; }
+.tray-col   { border-left:  1px solid #d0c8bc; }
+.buffer-label {
+  font-size: 0.6rem; color: #b0a898; letter-spacing: 0.06em;
+  text-transform: uppercase; text-align: center; margin-bottom: 2px;
+}
+
+.slot, .tray-slot {
+  width: 72px; height: 72px;
+  border: 2px dashed #b0a898; border-radius: 8px;
+  background: #f0ece4;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  transition: border-color 0.12s, background 0.12s;
+}
+.tray-slot { border-style: solid; border-color: #d0c8bc; }
+.slot.drag-over, .tray-slot.drag-over { border-color: #5566ee; background: #eeeeff; }
+.tray-num {
+  position: absolute; bottom: 3px; left: 6px;
+  font-size: 0.65rem; color: #b0a898; font-weight: 700; pointer-events: none;
+}
+
+.scale-col {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 14px; padding: 16px;
+}
+.scale-wrap { position: relative; width: 340px; height: 280px; flex-shrink: 0; }
+#scale-svg { position: absolute; top: 0; left: 0; width: 340px; height: 280px; overflow: visible; }
+
+/* Pan drop zones — repositioned by JS after each beam update */
+.pan-zone {
+  position: absolute; width: 80px; height: 80px;
+  display: flex; align-items: flex-end; justify-content: center;
+  border-radius: 6px; transition: background 0.12s; cursor: pointer;
+}
+.pan-zone.drag-over { background: rgba(85,102,238,0.13); }
+
+.cyl, .pan-cyl {
+  width: 44px; height: 52px; cursor: grab; touch-action: none; flex-shrink: 0;
+}
+.cyl svg, .pan-cyl svg { width: 44px; height: 52px; display: block; }
+
+.btn-row { display: flex; gap: 10px; }
+button {
+  padding: 7px 18px; border: 1px solid #b0a898;
+  background: #e8e3da; color: #555; border-radius: 7px;
+  font-size: 0.78rem; cursor: pointer;
+}
+button:hover { background: #ddd8cf; }
+.feedback { font-size: 0.78rem; color: #888; min-height: 1.1em; text-align: center; }
+
+.drag-ghost {
+  position: fixed; pointer-events: none; z-index: 9999;
+  opacity: 0.9; transform: scale(1.1); width: 44px; height: 52px;
+}
+.drag-ghost svg { width: 44px; height: 52px; display: block; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- LEFT: single buffer slot -->
+  <div class="buffer-col">
+    <div class="buffer-label">Ablage</div>
+    <div class="slot" id="buffer-slot"></div>
+  </div>
+
+  <!-- CENTER: scale -->
+  <div class="scale-col">
+    <div class="scale-wrap" id="scale-wrap">
+      <svg id="scale-svg" viewBox="0 0 340 280" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="170,160 158,188 182,188" fill="#cc2200"/>
+        <rect x="145" y="186" width="50" height="9" rx="3" fill="#cc2200"/>
+        <!-- VERIFIED: +N = right DOWN, -N = left DOWN -->
+        <g id="beam-g" style="transform-origin:170px 160px; transition:transform 0.4s cubic-bezier(.4,1.2,.6,1)">
+          <line x1="15" y1="160" x2="325" y2="160" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+          <rect x="8"   y="153" width="90" height="12" rx="4" fill="#333"/>
+          <rect x="242" y="153" width="90" height="12" rx="4" fill="#333"/>
+          <g id="svg-cyl-L"></g>
+          <g id="svg-cyl-R"></g>
+        </g>
+      </svg>
+      <div class="pan-zone" id="pan-zone-L"></div>
+      <div class="pan-zone" id="pan-zone-R"></div>
+    </div>
+    <div class="btn-row">
+      <button onclick="clearPans()">Waage leeren</button>
+      <button onclick="reset()">Neu mischen</button>
+    </div>
+    <div class="feedback" id="feedback"></div>
+  </div>
+
+  <!-- RIGHT: tray -->
+  <div class="tray-col" id="tray"></div>
+</div>
+
+<script>
+const CYLINDERS = [
+  { id:'transparent', weight:6, fill:'rgba(210,210,225,0.45)', stroke:'#aaa',    hi:'rgba(255,255,255,0.85)' },
+  { id:'white',       weight:5, fill:'#ffffff',                stroke:'#cccccc', hi:'#ffffff' },
+  { id:'green',       weight:4, fill:'#5a9e38',                stroke:'#3a6820', hi:'#8dd860' },
+  { id:'blue',        weight:3, fill:'#2248cc',                stroke:'#0a1a80', hi:'#6090ff' },
+  { id:'silver',      weight:2, fill:'#909090',                stroke:'#555',    hi:'#d8d8d8' },
+  { id:'gold',        weight:1, fill:'#c89000',                stroke:'#7a5000', hi:'#ffd966' },
+];
+
+function cylSVGStr(id) {
+  const c = CYLINDERS.find(x => x.id === id);
+  return `<svg viewBox="0 0 44 52" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="10" width="40" height="34" fill="${c.fill}" stroke="${c.stroke}" stroke-width="1.2"/>
+    <ellipse cx="22" cy="44" rx="20" ry="6" fill="${c.stroke}"/>
+    <ellipse cx="22" cy="10" rx="20" ry="6" fill="${c.hi}" stroke="${c.stroke}" stroke-width="1.2"/>
+    <ellipse cx="15" cy="9" rx="6" ry="2.5" fill="rgba(255,255,255,0.3)"/>
+  </svg>`;
+}
+
+function cylSVGInBeam(id, cx) {
+  const c = CYLINDERS.find(x => x.id === id);
+  const w=40, h=48, bottom=153;
+  const x = cx - w/2, top = bottom - h;
+  return `
+    <rect x="${x}" y="${top+9}" width="${w}" height="${h-9}" fill="${c.fill}" stroke="${c.stroke}" stroke-width="1"/>
+    <ellipse cx="${cx}" cy="${bottom}"  rx="${w/2}" ry="6"   fill="${c.stroke}"/>
+    <ellipse cx="${cx}" cy="${top+9}"   rx="${w/2}" ry="6"   fill="${c.hi}" stroke="${c.stroke}" stroke-width="1"/>
+    <ellipse cx="${cx-5}" cy="${top+8}" rx="5"      ry="2.2" fill="rgba(255,255,255,0.3)"/>
+  `;
+}
+
+// SVG geometry
+// Pivot: (170, 160). Left shelf center: x≈53, top y=153. Right shelf center: x≈287.
+// VERIFIED: rotate(+N) → right end DOWN; rotate(-N) → left end DOWN.
+const PIVOT = { x: 170, y: 160 };
+
+function rotatePoint(px, py, angleDeg) {
+  const a = angleDeg * Math.PI / 180;
+  const dx = px - PIVOT.x, dy = py - PIVOT.y;
+  return {
+    x: PIVOT.x + dx * Math.cos(a) - dy * Math.sin(a),
+    y: PIVOT.y + dx * Math.sin(a) + dy * Math.cos(a),
+  };
+}
+
+// STATE
+let panL = null, panR = null;
+let buffer = null;
+let tray = Array(6).fill(null);
+let traySlotOf = {};
+let dragId = null, dragFrom = null, ghost = null;
+
+function getAngle() {
+  const lw = panL ? CYLINDERS.find(c=>c.id===panL).weight : 0;
+  const rw = panR ? CYLINDERS.find(c=>c.id===panR).weight : 0;
+  if (lw > rw) return -28;
+  if (rw > lw) return  28;
+  return 0;
+}
+
+function updateBeam() {
+  const angle = getAngle();
+  document.getElementById('beam-g').style.transform = `rotate(${angle}deg)`;
+  document.getElementById('svg-cyl-L').innerHTML = panL ? cylSVGInBeam(panL, 53)  : '';
+  document.getElementById('svg-cyl-R').innerHTML = panR ? cylSVGInBeam(panR, 287) : '';
+
+  // Reposition HTML pan zones to match the actual rotated shelf positions
+  // Shelf top-center in beam-local coords: L=(53,153), R=(287,153)
+  // After rotation, convert to CSS pixels within .scale-wrap
+  const wrap = document.getElementById('scale-wrap');
+  const wRect = wrap.getBoundingClientRect();
+  const scaleX = wRect.width  / 340;
+  const scaleY = wRect.height / 280;
+
+  const PAN_W = 80, PAN_H = 80;
+
+  // Left pan zone: centered on rotated left shelf, zone bottom = shelf top
+  const lPt = rotatePoint(53, 153, angle);
+  const rPt = rotatePoint(287, 153, angle);
+
+  const zL = document.getElementById('pan-zone-L');
+  const zR = document.getElementById('pan-zone-R');
+
+  // Position: center zone horizontally on shelf center, bottom of zone at shelf top
+  zL.style.left   = (lPt.x * scaleX - PAN_W / 2) + 'px';
+  zL.style.top    = (lPt.y * scaleY - PAN_H) + 'px';
+  zL.style.width  = PAN_W + 'px';
+  zL.style.height = PAN_H + 'px';
+  zL.style.transform = `rotate(${angle}deg)`;
+  zL.style.transformOrigin = `${PAN_W/2}px ${PAN_H}px`;
+
+  zR.style.left   = (rPt.x * scaleX - PAN_W / 2) + 'px';
+  zR.style.top    = (rPt.y * scaleY - PAN_H) + 'px';
+  zR.style.width  = PAN_W + 'px';
+  zR.style.height = PAN_H + 'px';
+  zR.style.transform = `rotate(${angle}deg)`;
+  zR.style.transformOrigin = `${PAN_W/2}px ${PAN_H}px`;
+}
+
+function render() {
+  // Buffer slot (left)
+  const buf = document.getElementById('buffer-slot');
+  buf.innerHTML = '';
+  if (buffer) buf.appendChild(makeEl(buffer, 'cyl'));
+
+  // Tray (right, 6 fixed slots)
+  const trayEl = document.getElementById('tray');
+  trayEl.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const w = document.createElement('div');
+    w.className = 'tray-slot';
+    w.innerHTML = `<span class="tray-num">${i}</span>`;
+    if (tray[i]) w.appendChild(makeEl(tray[i], 'cyl'));
+    trayEl.appendChild(w);
+  }
+
+  updateBeam();
+}
+
+function makeEl(id, cls) {
+  const el = document.createElement('div');
+  el.className = cls; el.dataset.id = id;
+  el.innerHTML = cylSVGStr(id);
+  el.addEventListener('pointerdown', onDragStart, { passive: false });
+  return el;
+}
+
+// Pan zone tap handlers
+['pan-zone-L','pan-zone-R'].forEach(zid => {
+  document.getElementById(zid).addEventListener('pointerdown', e => {
+    const id = zid === 'pan-zone-L' ? panL : panR;
+    if (!id) return;
+    e.preventDefault();
+    startDrag(id, zid === 'pan-zone-L' ? 'pan-L' : 'pan-R', e.clientX, e.clientY);
+  }, { passive: false });
+});
+
+// Buffer slot tap handler
+document.getElementById('buffer-slot').addEventListener('pointerdown', e => {
+  if (!buffer || e.target.closest('.cyl')) return;
+  e.preventDefault();
+  startDrag(buffer, 'buffer', e.clientX, e.clientY);
+}, { passive: false });
+
+function startDrag(id, from, cx, cy) {
+  dragId = id; dragFrom = from;
+  removeFromSource(from, id);
+  render();
+  ghost = document.createElement('div');
+  ghost.className = 'drag-ghost';
+  ghost.innerHTML = cylSVGStr(id);
+  ghost.style.left = (cx - 22) + 'px';
+  ghost.style.top  = (cy - 30) + 'px';
+  document.body.appendChild(ghost);
+  document.addEventListener('pointermove', onDragMove);
+  document.addEventListener('pointerup',   onDragEnd);
+}
+
+function onDragStart(e) {
+  e.preventDefault(); e.stopPropagation();
+  const el = e.currentTarget;
+  const id = el.dataset.id;
+  let from = null;
+  let node = el.parentElement;
+  while (node) {
+    if (node.id === 'pan-zone-L')              { from = 'pan-L';  break; }
+    if (node.id === 'pan-zone-R')              { from = 'pan-R';  break; }
+    if (node.id === 'buffer-slot')             { from = 'buffer'; break; }
+    if (node.classList?.contains('tray-slot')) {
+      from = `tray-${[...node.parentElement.children].indexOf(node)}`; break;
+    }
+    node = node.parentElement;
+  }
+  if (!from) from = `tray-${traySlotOf[id] ?? 0}`;
+  startDrag(id, from, e.clientX, e.clientY);
+}
+
+function onDragMove(e) {
+  if (!ghost) return;
+  ghost.style.left = (e.clientX - 22) + 'px';
+  ghost.style.top  = (e.clientY - 30) + 'px';
+}
+
+function onDragEnd(e) {
+  document.removeEventListener('pointermove', onDragMove);
+  document.removeEventListener('pointerup',   onDragEnd);
+  if (ghost) { ghost.remove(); ghost = null; }
+  const target = findDrop(e.clientX, e.clientY);
+  placeIn(target, dragId);
+  dragId = null; dragFrom = null;
+  render(); setFeedback('');
+}
+
+function findDrop(x, y) {
+  const zones = [
+    document.getElementById('pan-zone-L'),
+    document.getElementById('pan-zone-R'),
+    document.getElementById('buffer-slot'),
+    ...document.querySelectorAll('.tray-slot'),
+  ];
+  for (const z of zones) {
+    const r = z.getBoundingClientRect();
+    if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+      if (z.id === 'pan-zone-L')  return 'pan-L';
+      if (z.id === 'pan-zone-R')  return 'pan-R';
+      if (z.id === 'buffer-slot') return 'buffer';
+      if (z.classList.contains('tray-slot'))
+        return `tray-${[...z.parentElement.children].indexOf(z)}`;
+    }
+  }
+  return null;
+}
+
+function removeFromSource(from, id) {
+  if (from === 'pan-L')  { if (panL === id) panL = null; }
+  else if (from === 'pan-R')   { if (panR === id) panR = null; }
+  else if (from === 'buffer')  { if (buffer === id) buffer = null; }
+  else if (from?.startsWith('tray-')) {
+    const i = +from.split('-')[1]; if (tray[i] === id) tray[i] = null;
+  }
+}
+
+function returnToTray(id) {
+  const idx = traySlotOf[id];
+  if (idx !== undefined && tray[idx] === null) { tray[idx] = id; return; }
+  const free = tray.indexOf(null);
+  if (free !== -1) tray[free] = id;
+}
+
+function placeIn(loc, id) {
+  if (!loc) { returnToTray(id); return; }
+  if (loc === 'pan-L') {
+    if (panL !== null) returnToTray(panL);
+    panL = id;
+  } else if (loc === 'pan-R') {
+    if (panR !== null) returnToTray(panR);
+    panR = id;
+  } else if (loc === 'buffer') {
+    if (buffer !== null) returnToTray(buffer);
+    buffer = id;
+  } else if (loc.startsWith('tray-')) {
+    const i = +loc.split('-')[1];
+    if (tray[i] !== null) returnToTray(tray[i]);
+    tray[i] = id;
+  }
+}
+
+function clearPans() {
+  if (panL) { returnToTray(panL); panL = null; }
+  if (panR) { returnToTray(panR); panR = null; }
+  render(); setFeedback('');
+}
+
+function reset() {
+  panL = null; panR = null; buffer = null;
+  tray = Array(6).fill(null); traySlotOf = {};
+  CYLINDERS.map(c=>c.id).sort(()=>Math.random()-0.5).forEach((id,i) => {
+    tray[i] = id; traySlotOf[id] = i;
+  });
+  render(); setFeedback('');
+}
+
+function setFeedback(msg, cls='') {
+  const el = document.getElementById('feedback');
+  el.textContent = msg; el.className = 'feedback ' + cls;
+}
+
+reset();
+</script>
+</body>
+</html>
